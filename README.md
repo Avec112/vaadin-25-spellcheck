@@ -36,6 +36,28 @@ This is what makes the edit-and-see-it loop feel instant — and it's required f
 
 ---
 
+## Offline spell checking
+
+`MyCustomTextArea` and `MyCustomTextField` (package `com.github.avec112.spellcheck`) add opt-in, fully offline spell
+checking for Norwegian Bokmål (default), American English and British English:
+
+```java
+MyCustomTextArea description = new MyCustomTextArea("Description");
+description.setSpellCheckEnabled(true);
+description.setSpellCheckLanguage(SpellCheckLanguage.EN_GB); // optional, default NB_NO
+```
+
+Try it at **http://localhost:8080/spellcheck-demo**. Architecture, dictionary sources, licenses and limitations are
+described in [src/main/frontend/spellcheck/README.md](src/main/frontend/spellcheck/README.md).
+
+Tests: `./mvnw test` (Java) and `npm run test:frontend` (spell engine against the real dictionaries; Node 22.18+, after
+the first Maven build has installed `node_modules`).
+
+For builds without internet access, commit `src/main/bundles/prod.bundle`: Vaadin then reuses the pre-built production
+bundle (including the dictionaries) and needs neither npm nor Node.js, as long as the frontend sources are unchanged.
+
+---
+
 ## Ask your AI assistant about Vaadin (optional)
 
 If you use Claude Code, Cursor, or another AI coding assistant, connect it to the **Vaadin MCP server** so it answers against real Vaadin docs and the exact API of your installed version — instead of guessing from outdated training data.
