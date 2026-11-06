@@ -17,12 +17,51 @@ export interface SpellingIssue extends Token {
   suggestions: string[];
 }
 
+/** A set of accepted words; only lookup is needed. */
+export interface WordSet {
+  has(word: string): boolean;
+}
+
+/** Key in a {@link SharedVocabulary} for words that apply to all languages. */
+export const ALL_LANGUAGES = '*';
+
+/** Shared vocabulary by language code, plus {@link ALL_LANGUAGES}. */
+export type SharedVocabulary = ReadonlyMap<string, ReadonlySet<string>>;
+
+/**
+ * Parses the shared vocabulary as sent by the server (SharedVocabularySync):
+ * one "language TAB word" pair per line, where the language is "*" for all
+ * languages.
+ */
+export function parseSharedVocabulary(text: string): SharedVocabulary {
+  const vocabulary = new Map<string, Set<string>>();
+  for (const line of text.split('\n')) {
+    const tab = line.indexOf('\t');
+    if (tab > 0 && tab < line.length - 1) {
+      const language = line.slice(0, tab);
+      let words = vocabulary.get(language);
+      if (!words) {
+        words = new Set();
+        vocabulary.set(language, words);
+      }
+      words.add(line.slice(tab + 1));
+    }
+  }
+  return vocabulary;
+}
+
+/** Combines several word sets into one, without copying them. */
+export function unionOf(...sets: ReadonlyArray<WordSet | undefined>): WordSet {
+  const present = sets.filter((set): set is WordSet => set !== undefined);
+  return { has: (word) => present.some((set) => set.has(word)) };
+}
+
 /** Characters that may be part of a word (see WORD_PATTERN in spell-engine.ts). */
 const WORD_CHAR = /[\p{L}\p{M}\p{N}'’-]/u;
 
 /** Whether a word is accepted by the given vocabulary (custom or ignored words). */
-export function isAccepted(word: string, accepted: ReadonlySet<string> | undefined): boolean {
-  if (!accepted || accepted.size === 0) {
+export function isAccepted(word: string, accepted: WordSet | undefined): boolean {
+  if (!accepted) {
     return false;
   }
   // A lowercase entry also accepts its sentence-start capitalization.

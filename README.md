@@ -47,10 +47,18 @@ description.setSpellCheckEnabled(true);
 description.setSpellCheckLanguage(SpellCheckLanguage.EN_GB); // optional, default NB_NO
 ```
 
-Try it at **http://localhost:8080/spellcheck-demo**. Architecture, dictionary sources, licenses and limitations are
+Users can add words to a **shared dictionary** for everybody ("Add to dictionary" in a field, or the **Dictionary**
+page). It is stored in Postgres, and every change is logged with user, time and comment.
+
+Try it at **http://localhost:8080/spellcheck-demo** and log in as `anna` / `demo` or `bjorn` / `demo`. Use two browsers
+to see the dictionary update live for the other user. Architecture, dictionary sources, licenses and limitations are
 described in [src/main/frontend/spellcheck/README.md](src/main/frontend/spellcheck/README.md).
 
-Tests: `./mvnw test` (Java) and `npm run test:frontend` (spell engine against the real dictionaries; Node 22.18+, after
+**Database.** Running the application requires Docker: Spring Boot starts Postgres from `compose.yaml` automatically
+(`./mvnw spring-boot:run` or from the IDE) and Flyway creates the tables. The packaged jar does not include this; set
+`SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME` and `SPRING_DATASOURCE_PASSWORD` when running it (also in Docker).
+
+Tests: `./mvnw test` (Java; the database tests use Testcontainers and need Docker) and `npm run test:frontend` (spell engine against the real dictionaries; Node 22.18+, after
 the first Maven build has installed `node_modules`).
 
 For builds without internet access, commit `src/main/bundles/prod.bundle`: Vaadin then reuses the pre-built production

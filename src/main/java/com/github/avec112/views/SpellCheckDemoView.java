@@ -20,12 +20,15 @@ import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouteAlias;
 
+import jakarta.annotation.security.PermitAll;
+
 /**
  * Manual test page for the offline spell-checking components.
  */
 @Route("spellcheck-demo")
 @RouteAlias("")
 @PageTitle("Spell check demo")
+@PermitAll
 public class SpellCheckDemoView extends VerticalLayout {
 
     private static final String NORWEGIAN_TEXT = """

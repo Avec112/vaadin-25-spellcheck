@@ -7,11 +7,16 @@
  *
  * Dictionaries are fetched lazily, the first time a language is requested,
  * from URLs on the application's own origin (see spell-check-client.ts).
+ *
+ * The application's shared vocabulary arrives as a separate message whenever
+ * it changes, and is used for every check, so it is not resent per request.
  */
 import { checkText, createSpellChecker, type SpellChecker } from './spell-engine';
-import type { CheckRequest, CheckResponse, DictionaryUrls } from './spell-check-client';
+import { ALL_LANGUAGES, parseSharedVocabulary, unionOf, type SharedVocabulary } from './spell-text';
+import type { CheckResponse, DictionaryUrls, WorkerRequest } from './spell-check-client';
 
 const checkers = new Map<string, Promise<SpellChecker>>();
+let shared: SharedVocabulary = new Map();
 
 function checkerFor(language: string, urls: DictionaryUrls): Promise<SpellChecker> {
   let checker = checkers.get(language);
@@ -36,12 +41,18 @@ async function fetchText(url: string): Promise<string> {
   return response.text();
 }
 
-self.addEventListener('message', async (event: MessageEvent<CheckRequest>) => {
+self.addEventListener('message', async (event: MessageEvent<WorkerRequest>) => {
+  if (event.data.type === 'vocabulary') {
+    shared = parseSharedVocabulary(event.data.text);
+    return;
+  }
   const { id, language, urls, text, acceptedWords } = event.data;
   let response: CheckResponse;
   try {
     const checker = await checkerFor(language, urls);
-    response = { id, issues: checkText(checker, text, { acceptedWords: new Set(acceptedWords) }) };
+    // Read the shared vocabulary after loading: it may have arrived meanwhile.
+    const accepted = unionOf(new Set(acceptedWords), shared.get(ALL_LANGUAGES), shared.get(language));
+    response = { id, issues: checkText(checker, text, { acceptedWords: accepted }) };
   } catch (error) {
     response = { id, error: error instanceof Error ? error.message : String(error) };
   }

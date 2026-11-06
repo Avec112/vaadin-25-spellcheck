@@ -8,6 +8,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 import com.vaadin.flow.component.Component;
+import com.vaadin.flow.component.UI;
 import com.vaadin.flow.dom.Element;
 
 /**
@@ -25,6 +26,11 @@ import com.vaadin.flow.dom.Element;
  * The indicator is a bare {@link Element} rather than a {@link Component}, so
  * {@code getSuffixComponent()} on the host field keeps returning the
  * application's own suffix component (or {@code null}).
+ * <p>
+ * If the application has installed a {@link SharedSpellCheckVocabulary}, the
+ * field's UI is kept in sync with it ({@link SharedVocabularySync}) and the
+ * indicator offers "Add to dictionary", which opens
+ * {@link AddSpellCheckWordDialog}.
  */
 final class SpellCheckSupport implements Serializable {
 
@@ -44,6 +50,22 @@ final class SpellCheckSupport implements Serializable {
         this.field = Objects.requireNonNull(field, "field must not be null");
         indicator.setProperty("language", language.getCode());
         indicator.setProperty("customWords", "");
+        field.addAttachListener(event -> connectSharedVocabulary(event.getUI()));
+        indicator.addEventListener("spell-check-add-word",
+                event -> openAddWordDialog(event.getEventData().get("event.detail.word").asString()))
+                .addEventData("event.detail.word");
+    }
+
+    private void connectSharedVocabulary(UI ui) {
+        SharedSpellCheckVocabulary.current().ifPresent(vocabulary -> {
+            SharedVocabularySync.ensure(ui, vocabulary);
+            indicator.setProperty("canAddWords", true);
+        });
+    }
+
+    private void openAddWordDialog(String word) {
+        SharedSpellCheckVocabulary.current()
+                .ifPresent(vocabulary -> new AddSpellCheckWordDialog(vocabulary, word, language).open());
     }
 
     void setEnabled(boolean enabled) {

@@ -14,6 +14,10 @@ description.setSpellCheckLanguage(SpellCheckLanguage.EN_GB);    // change any ti
 description.addSpellCheckWord("Fjordlyx");                      // this field only
 ```
 
+With a [shared dictionary](#shared-dictionary) installed, users can also add
+words for everybody with *Add to dictionary*, and manage them on the
+*Dictionary* page (`/dictionary`).
+
 Demo: `/spellcheck-demo` (also the root route).
 
 ## How it works
@@ -114,6 +118,87 @@ disabled.
   part by part, like Hunspell does. URLs, e-mail addresses, words containing
   digits, ALL-CAPS abbreviations and single letters are not checked.
 
+## Shared dictionary
+
+An organization-wide list of accepted words (product names, abbreviations,
+department names). Every user can add, edit and delete words. Every change
+is logged with the user, the time and an optional comment, so a mistake such
+as "Datatek" instead of "DataTek" can be traced and corrected. A word applies
+either to all languages (the default, typical for names) or to one language.
+Matching is case-sensitive.
+
+### For users
+
+- **Adding a word.** In a spell-checked field, click into an underlined word
+  (or use the `abc` list) and choose *Add to dictionary*. A dialog lets you
+  correct the spelling or capitalization, choose *All languages* or the
+  field's language, and add a comment. The word is accepted immediately in
+  every open field, for every user, without reloading.
+- **Managing words.** The *Dictionary* page (`/dictionary`) lists all words
+  with who added them and when, with search, *Add word*, *Edit* and
+  *Delete*, each with an optional comment. Below the list is the change
+  log: recent changes, or the full history of the selected word, including
+  deleted words.
+
+### Design
+
+```text
+spellcheck (component library, no database or Spring dependency)
+  SharedSpellCheckVocabulary   interface: getWords(), addWord(...), addChangeListener(...)
+                               + install(VaadinContext, vocabulary)
+  SharedVocabularySync         one per browser tab: sends the word list once, pushes changes
+  AddSpellCheckWordDialog      the "Add to dictionary" dialog
+
+vocabulary (application layer, copy into your application)
+  VocabularyService            implements the interface with JPA; validation, change log,
+                               in-memory cache, notifies listeners after commit
+  VocabularyWord / VocabularyWordChange + repositories
+  VocabularyView, WordDialog   the Dictionary page
+  VocabularyConfiguration      installs the service for the spell-check components
+  db/migration/V1__spellcheck_vocabulary.sql (Flyway)
+```
+
+- **The components stay generic.** They only see
+  `SharedSpellCheckVocabulary`. Without an installed vocabulary they behave as
+  before and don't offer *Add to dictionary*.
+- **Efficient delivery.** The word list is sent once per browser tab (not per
+  field, not per check) and forwarded once to the spell-check worker, which
+  uses it for every check. Thousands of words are fine.
+- **Live updates.** After a change is committed, `VocabularyService` notifies
+  every open tab, which receives the new list through Vaadin Push (`@Push` on
+  `AppShell`). All fields re-check, and open *Dictionary* pages refresh. A
+  rejected or rolled-back change notifies nobody.
+- **Who changed what.** The user name comes from Spring Security
+  (`SecurityContextHolder`). The change log has no foreign key to the word,
+  so the history of deleted words is kept.
+- **Concurrent edits.** Edit and delete carry the version the user saw.
+  If someone else changed or deleted the word in the meantime, the action is
+  refused with a message and the list refreshes. A unique constraint on
+  (word, language) prevents duplicates even under concurrent additions.
+- **Validation.** One word without whitespace, at most 100 characters, and
+  comments at most 500 characters. Exact duplicates are refused, and so is a
+  word for one language that already exists for all languages.
+
+### Moving it to your application
+
+1. Copy the `spellcheck` package (components) and the `vocabulary` package
+   (service, entities, page).
+2. Copy `V1__spellcheck_vocabulary.sql` into your Flyway migrations, renamed
+   to your next version number.
+3. Add the Dictionary page to your navigation, and adjust `@PermitAll` on
+   `VocabularyView` if not every user should see it.
+4. Make sure the application uses `@Push` (needed for live updates).
+
+### Limitations
+
+- **Several application nodes.** The cache and listeners live in one JVM.
+  With several nodes, the other nodes see a change after their next own
+  change or restart. If you run several nodes, add a cross-node signal, for
+  example Postgres `LISTEN/NOTIFY` that calls `clearCache()` and the
+  listeners, or a short polling interval.
+- **Not localized.** The dialog and page texts are English, like the rest of
+  the spell-check UI.
+
 ## Dictionaries and licenses
 
 | Language | Files | Source | License |
@@ -189,14 +274,14 @@ a root, and `CHECKCOMPOUNDTRIPLE` applies. It is not a heuristic of its own.
   13 MB. The 9 MB `nb-NO.dic` is downloaded once and then served from the
   browser cache (hashed file name). Enabling HTTP compression for these files
   on the server or proxy reduces the download to about 2 MB.
-- **Ignore** is per field and per page load. It is not persisted, and
-  *Add to dictionary* is intentionally not offered; use
-  `addSpellCheckWord` for organization vocabulary.
+- **Ignore** is per field and per page load and is not persisted. Use
+  *Add to dictionary* for words everybody should have.
 - **UI texts** in the indicator and popover are English.
 
 ## Tests
 
 ```bash
-./mvnw test              # Java: component API, Binder/value semantics, demo view (browserless)
+./mvnw test              # Java: component API, Binder, views (browserless), shared dictionary
+                         # against real Postgres (Testcontainers; needs Docker)
 npm run test:frontend    # Engine and async tests against the real dictionaries (Node 22.18+)
 ```

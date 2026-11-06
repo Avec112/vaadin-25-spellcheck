@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkText, createSpellChecker, tokenize, type SpellChecker } from '../../main/frontend/spellcheck/spell-engine.ts';
-import { applyReplacement } from '../../main/frontend/spellcheck/spell-text.ts';
+import { applyReplacement, ALL_LANGUAGES, parseSharedVocabulary, unionOf } from '../../main/frontend/spellcheck/spell-text.ts';
 
 const dictionaryDir = new URL('../../main/frontend/spellcheck/dictionaries/', import.meta.url);
 
@@ -248,6 +248,19 @@ describe('checkText and corrections', () => {
     assert.deepEqual(misspelled(nb, 'foobarsystem', ['FooBarSystem']), ['foobarsystem']);
     // The shared dictionary was not modified.
     assert.equal(nb.correct('qwixly'), false);
+  });
+
+  test('shared vocabulary: all-language words apply everywhere, language words only there', () => {
+    const shared = parseSharedVocabulary('*\tDataTek\nnb-NO\tFjordlyx');
+    const accepted = (language: string) => unionOf(shared.get(ALL_LANGUAGES), shared.get(language));
+    const text = 'DataTek og Fjordlyx';
+    assert.deepEqual(misspelled(nb, text), ['DataTek', 'Fjordlyx']);
+    assert.deepEqual(checkText(nb, text, { acceptedWords: accepted('nb-NO') }).map((i) => i.word), []);
+    assert.deepEqual(checkText(enUS, 'DataTek and Fjordlyx', { acceptedWords: accepted('en-US') }).map((i) => i.word), [
+      'Fjordlyx',
+    ]);
+    // Case-sensitive: "Datatek" is not "DataTek".
+    assert.deepEqual(checkText(nb, 'Datatek', { acceptedWords: accepted('nb-NO') }).map((i) => i.word), ['Datatek']);
   });
 
   test('the same text gives language-specific results', () => {

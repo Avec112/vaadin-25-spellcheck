@@ -7,7 +7,7 @@
  * All offsets are JavaScript string indices (UTF-16 code units).
  */
 import nspell from 'nspell';
-import { isAccepted, type SpellingIssue, type Token } from './spell-text';
+import { isAccepted, type SpellingIssue, type Token, type WordSet } from './spell-text';
 
 export type { SpellingIssue, Token };
 
@@ -19,8 +19,8 @@ export interface SpellChecker {
 }
 
 export interface CheckOptions {
-  /** Words accepted in addition to the dictionary (per component). */
-  acceptedWords?: ReadonlySet<string>;
+  /** Words accepted in addition to the dictionary (custom, ignored and shared words). */
+  acceptedWords?: WordSet;
   /** Maximum number of reported issues (protects against huge texts). */
   maxIssues?: number;
   /** Maximum number of suggestions per issue. */

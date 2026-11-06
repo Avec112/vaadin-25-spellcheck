@@ -1,0 +1,21 @@
+# Development database for the shared spell-check vocabulary.
+#
+# Started automatically by Spring Boot's Docker Compose support when the
+# application runs from the IDE or with ./mvnw spring-boot:run, and stopped
+# again when the application stops. The data volume survives restarts.
+# Spring Boot reads the connection details from this file; the host port is
+# chosen by Docker, so it never conflicts with another local Postgres.
+services:
+  postgres:
+    image: postgres:17.11-alpine
+    environment:
+      POSTGRES_DB: spellcheck
+      POSTGRES_USER: spellcheck
+      POSTGRES_PASSWORD: spellcheck
+    ports:
+      - "5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+volumes:
+  postgres-data:

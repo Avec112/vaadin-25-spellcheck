@@ -17,7 +17,11 @@
  *  - shows a compact button with the number of possible misspellings, which
  *    opens a `<vaadin-popover>` listing every misspelled word in context, with
  *    suggestions to replace it and an action to ignore it (also the keyboard
- *    route to all corrections).
+ *    route to all corrections);
+ *  - when the application has a shared vocabulary (`canAddWords`), offers
+ *    "Add to dictionary", which fires a `spell-check-add-word` event that the
+ *    server answers with a dialog (SpellCheckSupport.java), and re-checks
+ *    when the shared vocabulary changes.
  *
  * This element only uses public DOM of the Vaadin fields: the `value`
  * property, the `value-changed` event, the `readonly`/`disabled` attributes
@@ -35,7 +39,7 @@ import type { Popover } from '@vaadin/popover';
 import { css, html, LitElement, nothing, render, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { CheckScheduler } from './check-scheduler';
-import { checkSpelling, isSupportedLanguage } from './spell-check-client';
+import { checkSpelling, isSupportedLanguage, onSharedVocabularyChange } from './spell-check-client';
 import { SpellingUnderlines } from './spell-check-underlines';
 import { applyReplacement, isAccepted, remapIssues, type SpellingIssue } from './spell-text';
 
@@ -60,6 +64,9 @@ export class SpellCheckIndicator extends LitElement {
   /** Component-specific accepted words, newline-separated. Set by the server. */
   @property({ attribute: false }) customWords = '';
 
+  /** Whether "Add to dictionary" is offered. Set by the server. */
+  @property({ attribute: false }) canAddWords = false;
+
   @state() private status: Status = 'empty';
   @state() private issues: SpellingIssue[] = [];
   @state() private errorMessage = '';
@@ -79,6 +86,7 @@ export class SpellCheckIndicator extends LitElement {
   private stateObserver?: MutationObserver;
   private focusPanelAfterUpdate = false;
   private underlines?: SpellingUnderlines;
+  private removeVocabularyListener?: () => void;
   private wordPopover?: Popover;
   /** Invisible element at the clicked word, used to position `wordPopover`. */
   private wordAnchor?: HTMLElement;
@@ -212,6 +220,9 @@ export class SpellCheckIndicator extends LitElement {
       this.underlines = new SpellingUnderlines(this.nativeInput, () => this.errorColor());
     }
 
+    // Shared vocabulary changed (by any user): check again with it.
+    this.removeVocabularyListener = onSharedVocabularyChange(() => this.recheck());
+
     // React to setReadOnly()/setEnabled() from the server.
     this.stateObserver = new MutationObserver(() => this.refresh());
     this.stateObserver.observe(this.field, { attributes: true, attributeFilter: ['readonly', 'disabled'] });
@@ -225,6 +236,7 @@ export class SpellCheckIndicator extends LitElement {
     super.disconnectedCallback();
     // Detached or disabled from the server: stop everything, keep no results.
     this.scheduler.cancel();
+    this.removeVocabularyListener?.();
     this.stateObserver?.disconnect();
     this.field?.removeEventListener('value-changed', this.onValueChanged);
     if (this.nativeInput && this.nativeSpellcheck !== undefined) {
@@ -300,6 +312,13 @@ export class SpellCheckIndicator extends LitElement {
     // Results for another language or state are meaningless: start over.
     this.status = 'checking';
     this.check(this.field!.value ?? '');
+  }
+
+  /** Re-checks the current text without clearing the visible result first. */
+  private recheck() {
+    if (this.active && isSupportedLanguage(this.language)) {
+      this.check(this.field!.value ?? '');
+    }
   }
 
   /** Checks immediately, keeping the previous result visible (dimmed) meanwhile. */
@@ -401,6 +420,15 @@ export class SpellCheckIndicator extends LitElement {
   private errorColor(): string {
     const probe = this.renderRoot.querySelector('.error-color');
     return (probe && getComputedStyle(probe).color) || '#e5222d';
+  }
+
+  /** Asks the server to open its "Add to dictionary" dialog for the word. */
+  private requestAddWord(issue: SpellingIssue) {
+    this.closeWordPopover();
+    if (this.suggestions) {
+      this.suggestions.opened = false;
+    }
+    this.dispatchEvent(new CustomEvent('spell-check-add-word', { detail: { word: issue.word } }));
   }
 
   /** Called from a popover after the user picked a suggestion or ignored a word. */
@@ -507,6 +535,7 @@ export class SpellCheckIndicator extends LitElement {
       .errorMessage=${this.errorMessage}
       .onReplace=${(issue: SpellingIssue, word: string) => this.replace(issue, word, forWord)}
       .onIgnore=${(issue: SpellingIssue) => this.ignore(issue, forWord)}
+      .onAddWord=${this.canAddWords ? (issue: SpellingIssue) => this.requestAddWord(issue) : undefined}
     ></spell-check-panel>`;
   }
 }
@@ -523,6 +552,8 @@ export class SpellCheckPanel extends LitElement {
   @property({ attribute: false }) errorMessage = '';
   @property({ attribute: false }) onReplace: (issue: SpellingIssue, word: string) => void = () => {};
   @property({ attribute: false }) onIgnore: (issue: SpellingIssue) => void = () => {};
+  /** When set, an "Add to dictionary" action is shown. */
+  @property({ attribute: false }) onAddWord?: (issue: SpellingIssue) => void;
 
   static override styles = css`
     :host {
@@ -579,7 +610,8 @@ export class SpellCheckPanel extends LitElement {
       margin-top: 0.375em;
     }
 
-    .ignore {
+    .secondary {
+      display: flex;
       margin-left: auto;
     }
 
@@ -667,13 +699,22 @@ export class SpellCheckPanel extends LitElement {
               >`,
             )
           : html`<span class="none">No suggestions</span>`}
-        <vaadin-button
-          class="ignore"
-          theme="small tertiary"
-          aria-label="Ignore ${issue.word}"
-          @click=${() => this.onIgnore(issue)}
-          >Ignore</vaadin-button
-        >
+        <span class="secondary">
+          <vaadin-button
+            theme="small tertiary"
+            aria-label="Ignore ${issue.word}"
+            @click=${() => this.onIgnore(issue)}
+            >Ignore</vaadin-button
+          >
+          ${this.onAddWord
+            ? html`<vaadin-button
+                theme="small tertiary"
+                aria-label="Add ${issue.word} to the dictionary"
+                @click=${() => this.onAddWord!(issue)}
+                >Add to dictionary</vaadin-button
+              >`
+            : nothing}
+        </span>
     `;
   }
 }

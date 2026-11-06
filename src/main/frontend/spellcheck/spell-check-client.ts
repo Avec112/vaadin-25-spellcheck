@@ -24,12 +24,21 @@ export interface DictionaryUrls {
 }
 
 export interface CheckRequest {
+  type: 'check';
   id: number;
   language: string;
   urls: DictionaryUrls;
   text: string;
   acceptedWords: string[];
 }
+
+/** The shared vocabulary in the server's format (see SharedVocabularySync.java). */
+export interface VocabularyMessage {
+  type: 'vocabulary';
+  text: string;
+}
+
+export type WorkerRequest = CheckRequest | VocabularyMessage;
 
 export type CheckResponse = { id: number; issues: SpellingIssue[] } | { id: number; error: string };
 
@@ -43,6 +52,41 @@ const DICTIONARIES: Record<string, DictionaryUrls> = {
 let worker: Worker | undefined;
 let nextId = 0;
 const pending = new Map<number, { resolve: (issues: SpellingIssue[]) => void; reject: (error: Error) => void }>();
+
+/*
+ * Shared vocabulary. The server (SharedVocabularySync.java) stores it on the
+ * window object and fires an event, because it may run before or after this
+ * module is loaded. It is forwarded to the worker once per change, and the
+ * fields are told to re-check.
+ */
+declare global {
+  interface Window {
+    __spellCheckSharedVocabulary?: string;
+  }
+}
+let sharedVocabulary = window.__spellCheckSharedVocabulary;
+const vocabularyListeners = new Set<() => void>();
+
+window.addEventListener('spell-check-shared-vocabulary', () => {
+  if (window.__spellCheckSharedVocabulary !== sharedVocabulary) {
+    sharedVocabulary = window.__spellCheckSharedVocabulary;
+    sendVocabulary();
+    vocabularyListeners.forEach((listener) => listener());
+  }
+});
+
+function sendVocabulary() {
+  if (worker && sharedVocabulary !== undefined) {
+    const message: VocabularyMessage = { type: 'vocabulary', text: sharedVocabulary };
+    worker.postMessage(message);
+  }
+}
+
+/** Calls the listener whenever the shared vocabulary changes. Returns a function that removes it. */
+export function onSharedVocabularyChange(listener: () => void): () => void {
+  vocabularyListeners.add(listener);
+  return () => vocabularyListeners.delete(listener);
+}
 
 function getWorker(): Worker {
   if (!worker) {
@@ -67,6 +111,8 @@ function getWorker(): Worker {
       pending.clear();
       worker = undefined;
     });
+    // Messages are processed in order, so every check sees the vocabulary.
+    sendVocabulary();
   }
   return worker;
 }
@@ -93,7 +139,7 @@ export function checkSpelling(language: string, text: string, acceptedWords: str
   };
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    const request: CheckRequest = { id, language, urls, text, acceptedWords };
+    const request: CheckRequest = { type: 'check', id, language, urls, text, acceptedWords };
     getWorker().postMessage(request);
   });
 }

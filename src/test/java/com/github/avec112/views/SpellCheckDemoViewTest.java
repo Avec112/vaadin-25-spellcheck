@@ -8,7 +8,10 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.security.test.context.support.WithMockUser;
 
+import com.github.avec112.TestcontainersConfiguration;
 import com.github.avec112.spellcheck.MyCustomTextArea;
 import com.github.avec112.spellcheck.MyCustomTextField;
 import com.github.avec112.spellcheck.SpellCheckLanguage;
@@ -17,6 +20,8 @@ import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.radiobutton.RadioButtonGroup;
 
 @SpringBootTest
+@Import(TestcontainersConfiguration.class)
+@WithMockUser("anna")
 class SpellCheckDemoViewTest extends SpringBrowserlessTest {
 
     @Test

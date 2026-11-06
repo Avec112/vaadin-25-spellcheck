@@ -4,7 +4,13 @@
  */
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { remapIssues, type Token } from '../../main/frontend/spellcheck/spell-text.ts';
+import {
+  ALL_LANGUAGES,
+  parseSharedVocabulary,
+  remapIssues,
+  unionOf,
+  type Token,
+} from '../../main/frontend/spellcheck/spell-text.ts';
 
 /** Finds every occurrence of `word` in `text` as tokens. */
 function find(text: string, ...words: string[]): Token[] {
@@ -68,5 +74,26 @@ describe('remapIssues', () => {
 
   test('clearing the text drops everything', () => {
     assert.deepEqual(remapIssues(original, '', issues), []);
+  });
+});
+
+describe('shared vocabulary', () => {
+  test('parses "language TAB word" lines into sets per language', () => {
+    const vocabulary = parseSharedVocabulary('*\tDataTek\nnb-NO\tsaksbehandlingssystem\n*\tFjordlyx\nen-GB\tcolour-ish\n');
+    assert.deepEqual([...vocabulary.get(ALL_LANGUAGES)!], ['DataTek', 'Fjordlyx']);
+    assert.deepEqual([...vocabulary.get('nb-NO')!], ['saksbehandlingssystem']);
+    assert.equal(vocabulary.has('en-US'), false);
+  });
+
+  test('ignores empty and malformed lines', () => {
+    assert.equal(parseSharedVocabulary('').size, 0);
+    assert.equal(parseSharedVocabulary('\n\t\nnb-NO\t\nnoTab').size, 0);
+  });
+
+  test('unionOf accepts a word from any of the sets and skips missing ones', () => {
+    const union = unionOf(new Set(['a']), undefined, new Set(['b']));
+    assert.equal(union.has('a'), true);
+    assert.equal(union.has('b'), true);
+    assert.equal(union.has('c'), false);
   });
 });
