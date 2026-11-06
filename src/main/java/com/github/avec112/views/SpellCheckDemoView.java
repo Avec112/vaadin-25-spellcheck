@@ -47,8 +47,8 @@ public class SpellCheckDemoView extends VerticalLayout {
 
         add(new H1("Offline spell checking"));
         add(new Paragraph("Spelling is checked in the browser about 600 ms after you stop typing. "
-                + "Click the \"abc\" indicator in a field to see suggestions, replace a word or ignore it. "
-                + "No external services are used."));
+                + "Misspelled words are underlined; click into one to see suggestions next to it, "
+                + "or click the \"abc\" indicator to list all of them. No external services are used."));
 
         add(new H2("Norwegian Bokmål (TextArea)"));
         MyCustomTextArea norwegian = new MyCustomTextArea("Beskrivelse");

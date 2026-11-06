@@ -1,28 +1,21 @@
 /**
- * Pure spell-checking logic: tokenization, word checking, suggestions and
- * text replacement. It has no DOM dependencies so it can run in the Web Worker
- * and in Node-based tests against the real dictionaries.
+ * Pure spell-checking logic: tokenization, word checking and suggestions. It
+ * has no DOM dependencies so it runs in the Web Worker and in Node-based tests
+ * against the real dictionaries. Only the worker imports this module (it
+ * pulls in nspell); the page uses spell-text.ts.
  *
- * All offsets are JavaScript string indices (UTF-16 code units), which is what
- * `HTMLInputElement.selectionStart`/`setSelectionRange` use as well.
+ * All offsets are JavaScript string indices (UTF-16 code units).
  */
 import nspell from 'nspell';
+import { isAccepted, type SpellingIssue, type Token } from './spell-text';
+
+export type { SpellingIssue, Token };
 
 export interface SpellChecker {
   /** Whether the word is spelled correctly according to the dictionary. */
   correct(word: string): boolean;
   /** Correction suggestions, best first. */
   suggest(word: string): string[];
-}
-
-export interface Token {
-  word: string;
-  start: number;
-  end: number;
-}
-
-export interface SpellingIssue extends Token {
-  suggestions: string[];
 }
 
 export interface CheckOptions {
@@ -192,15 +185,6 @@ function parseFlags(flags: string, flagType: string | undefined): string[] {
   return Array.from(flags);
 }
 
-/** Whether a word is accepted by the given vocabulary (custom or ignored words). */
-export function isAccepted(word: string, accepted: ReadonlySet<string> | undefined): boolean {
-  if (!accepted || accepted.size === 0) {
-    return false;
-  }
-  // A lowercase entry also accepts its sentence-start capitalization.
-  return accepted.has(word) || accepted.has(word[0].toLowerCase() + word.slice(1));
-}
-
 /** Checks a whole text and returns the misspelled words, in text order. */
 export function checkText(checker: SpellChecker, text: string, options: CheckOptions = {}): SpellingIssue[] {
   const maxIssues = options.maxIssues ?? DEFAULT_MAX_ISSUES;
@@ -263,14 +247,3 @@ function suggestionsFor(checker: SpellChecker, word: string, max: number): strin
     .map((suggestion) => (curly ? suggestion.replace(/'/g, '’') : suggestion));
 }
 
-/**
- * Replaces one specific occurrence. Returns `null` if the text no longer
- * contains the expected word at the expected position (the text changed since
- * it was checked), so callers never replace the wrong text.
- */
-export function applyReplacement(text: string, issue: Token, replacement: string): string | null {
-  if (text.slice(issue.start, issue.end) !== issue.word) {
-    return null;
-  }
-  return text.slice(0, issue.start) + replacement + text.slice(issue.end);
-}

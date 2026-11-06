@@ -3,7 +3,7 @@
   "license": "UNLICENSED",
   "type": "module",
   "scripts": {
-    "test:frontend": "node --test \"src/test/frontend/**/*.test.ts\""
+    "test:frontend": "node --import ./src/test/frontend/resolve-ts.mjs --test \"src/test/frontend/**/*.test.ts\""
   },
   "dependencies": {
     "@vaadin/aura": "25.3.5",

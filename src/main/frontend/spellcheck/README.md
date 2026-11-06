@@ -23,7 +23,8 @@ MyCustomTextArea / MyCustomTextField         (Java, implement HasSpellCheck)
   └─ SpellCheckSupport                       (Java, shared state + DOM wiring)
        └─ <spell-check-indicator>            (spell-check-indicator.ts, in the field's suffix slot)
             ├─ CheckScheduler                (check-scheduler.ts: 600 ms debounce, stale-result guard)
-            ├─ <vaadin-popover> + <spell-check-panel>   (suggestions UI)
+            ├─ SpellingUnderlines            (spell-check-underlines.ts: red wavy lines in the field)
+            ├─ <vaadin-popover> + <spell-check-panel>   (suggestions: full list, or next to a word)
             └─ spell-check-client.ts ──postMessage──▶ spell-check.worker.ts (one Web Worker per page)
                                                         └─ spell-engine.ts + nspell + dictionaries
 ```
@@ -35,12 +36,15 @@ MyCustomTextArea / MyCustomTextField         (Java, implement HasSpellCheck)
   No server round trips happen while the user types or fixes words, except
   the field's normal value synchronization.
 - **Indicator.** It listens to the field's public `value-changed` event and
-  checks the text 600 ms after the last change. It shows a compact `abc`
-  button: a red badge with the number of possible misspellings, a green ✓
-  when there are none, or `!` if checking failed. The button opens a popover
-  listing each misspelled word in context, with suggestion buttons and
-  *Ignore*. The element hides itself when the field is read-only or
-  disabled. While it is active it turns off the browser's own `spellcheck`
+  checks the text 600 ms after the last change. Misspelled words get red
+  wavy underlines inside the field. Clicking into an underlined word opens
+  a small popover next to it with suggestions and *Ignore*; focus stays in
+  the field, so typing simply continues and closes the popover. The `abc`
+  button shows a red badge with the number of possible misspellings, a
+  green ✓ when there are none, or `!` if checking failed. It opens a popover
+  that lists every misspelled word in context, which is also how keyboard
+  users reach all corrections. The element hides itself, and the underlines
+  disappear, when the field is read-only or disabled. While it is active it turns off the browser's own `spellcheck`
   on the native input, so two different checkers don't report conflicting
   results.
 - **Worker.** Parsing the Norwegian dictionary takes about 1 s of CPU and
@@ -53,14 +57,33 @@ MyCustomTextArea / MyCustomTextField         (Java, implement HasSpellCheck)
   production bundle, so they are not part of the initial JavaScript bundle
   and are served (and long-term cached) by the application itself.
 
-### Why not red underlines inside the field?
+### How the underlines are drawn
 
-`<input>` and `<textarea>` cannot style ranges of their own text. Inline
-underlines would need either a transparent overlay that mirrors the text
-layout (fragile with scrolling, wrapping, zoom, IME and theming) or a
-`contenteditable` replacement for the Vaadin field, which would break its
-value, validation and accessibility semantics. The indicator plus popover
-uses only public Vaadin APIs and keeps the fields completely standard.
+`<input>` and `<textarea>` cannot style parts of their own text, and the CSS
+Custom Highlight API does not reach inside form controls. The underlines are
+therefore painted as an SVG **background image of the native input element
+itself** (`spell-check-underlines.ts`):
+
+1. An invisible mirror element gets the field's font, padding, border
+   widths, width and wrapping rules (from `getComputedStyle`) and the same
+   text, with each misspelled word in a `<span>`. The spans' rectangles are
+   exactly where the words appear in the field.
+2. Wavy lines at those positions become an SVG, set as the field's
+   `background-image`. The text is painted on top of it.
+
+A background moves with the element, so the lines follow the text wherever
+Vaadin scrolls or resizes it. That includes the auto-growing text area,
+which scrolls inside Vaadin's shadow DOM, where an overlay element could not
+follow. When the native element scrolls its own content (the text field's
+horizontal scroll), the background is offset by `scrollLeft`. The lines are
+redrawn when results change, when the element is resized, and after web
+fonts have loaded. While the user types, underlines on words the edit did
+not touch are moved along immediately (`remapIssues` in `spell-text.ts`),
+so they don't flicker while waiting for the next check.
+
+Nothing about input handling changes: only `background-*` inline styles of
+the native element are set, and they are restored when spell checking is
+disabled.
 
 ### Correctness details
 
@@ -68,9 +91,10 @@ uses only public Vaadin APIs and keeps the fields completely standard.
   shown if no newer check was started in the meantime, and detach, disable,
   read-only and language changes invalidate all in-flight checks
   (`CheckScheduler`).
-- **Replacing a word.** The replacement only happens if the field still
-  contains exactly the text that was checked and the word is still at the
-  same offsets. Otherwise the field is re-checked and nothing is replaced.
+- **Replacing a word.** Edits made after a check move the known
+  misspellings along (or drop those the edit touched). A replacement only
+  happens if the word is still exactly at the expected offsets; otherwise
+  the field is re-checked and nothing is replaced.
   Only that one occurrence is replaced, so repeated words, whitespace and
   line breaks are untouched. The new text is written to the native input,
   followed by `input` and `change` events, the same way Vaadin's own clear
@@ -139,8 +163,20 @@ a root, and `CHECKCOMPOUNDTRIPLE` applies. It is not a heuristic of its own.
 
 ## Limitations
 
-- **No inline underlines.** See above. Misspellings are shown in the popover,
-  where the word is underlined in its context.
+- **Underline accuracy.** The underlines depend on the mirror reproducing
+  the field's text layout. Fonts, padding, wrapping and scrolling have been
+  verified with Lumo in Chromium and Firefox. Custom CSS that changes text
+  layout in properties not copied by `spell-check-underlines.ts` (see
+  `LAYOUT_PROPERTIES`) could offset them. A style change that does not
+  resize the field (for example switching to dark mode) takes effect at the
+  next redraw, which happens on the next check.
+- **Underline color.** It is the theme's error color, sampled when the
+  underlines are drawn.
+- **Content Security Policy.** The underlines are `data:` SVG images. An
+  application with a strict CSP must allow `img-src data:`.
+- **Word popover by mouse only.** Clicking into an underlined word opens
+  suggestions next to it. Keyboard users use the `abc` button, which lists
+  all words.
 - **Norwegian compounds.** A misspelling that happens to form a legal
   compound is accepted, exactly as in Hunspell. For example *barnhage*
   (barn + hage) is accepted instead of being corrected to *barnehage*.

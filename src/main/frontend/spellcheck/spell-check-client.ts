@@ -7,7 +7,7 @@
  * actually needs a language, and the files never become part of the initial
  * JavaScript bundle. All URLs point to the application's own origin.
  */
-import type { SpellingIssue } from './spell-engine';
+import type { SpellingIssue } from './spell-text';
 import nbNoAff from './dictionaries/nb-NO/nb-NO.aff?url';
 import nbNoDic from './dictionaries/nb-NO/nb-NO.dic?url';
 import nbNoCompoundRoots from './dictionaries/nb-NO/nb-NO-compound-roots.dic?url';

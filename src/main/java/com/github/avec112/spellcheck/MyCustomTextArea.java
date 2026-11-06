@@ -12,9 +12,10 @@ import com.vaadin.flow.component.textfield.TextArea;
  * <p>
  * Spell checking is disabled by default and uses
  * {@link SpellCheckLanguage#NB_NO Norwegian Bokmål} unless another language is
- * set. When enabled, a compact indicator in the field's suffix area shows the
- * number of possible misspellings and opens a popover with suggested
- * corrections. All checking happens in the browser against bundled Hunspell
+ * set. When enabled, misspelled words get red wavy underlines; clicking into
+ * one shows suggested corrections next to it. A compact indicator in the
+ * field's suffix area shows the number of possible misspellings and opens a
+ * list of all of them. All checking happens in the browser against bundled Hunspell
  * dictionaries; no server round trips or external services are involved.
  * <p>
  * Everything else (value handling, {@code Binder}, validation, read-only,

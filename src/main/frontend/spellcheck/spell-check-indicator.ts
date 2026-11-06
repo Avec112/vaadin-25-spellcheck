@@ -10,16 +10,19 @@
  *    600 ms after the last change (never on every keystroke);
  *  - runs the check in a shared Web Worker (spell-check-client.ts) and drops
  *    stale results (check-scheduler.ts);
- *  - shows a compact button with the number of possible misspellings;
- *  - opens a `<vaadin-popover>` listing each misspelled word in context, with
- *    suggestions to replace it and an action to ignore it.
+ *  - draws red wavy underlines under misspelled words inside the field
+ *    (spell-check-underlines.ts) and moves them along while the user types;
+ *  - opens a small suggestion popover next to a misspelled word when the user
+ *    clicks into it;
+ *  - shows a compact button with the number of possible misspellings, which
+ *    opens a `<vaadin-popover>` listing every misspelled word in context, with
+ *    suggestions to replace it and an action to ignore it (also the keyboard
+ *    route to all corrections).
  *
- * Why not red underlines inside the field? `<input>` and `<textarea>` cannot
- * style ranges of their own text. Underlines would require a mirrored overlay
- * or a contenteditable replacement, both of which break native editing,
- * scrolling, IME and Vaadin's own behavior. This element only uses public DOM
- * of the Vaadin fields: the `value` property, the `value-changed` event, the
- * `readonly`/`disabled` attributes and the slotted native input element.
+ * This element only uses public DOM of the Vaadin fields: the `value`
+ * property, the `value-changed` event, the `readonly`/`disabled` attributes
+ * and the slotted native input element (whose background shows the
+ * underlines).
  *
  * Corrections are applied the same way Vaadin's own clear button changes the
  * value: by editing the native input and dispatching `input` and `change`
@@ -33,7 +36,8 @@ import { css, html, LitElement, nothing, render, type PropertyValues } from 'lit
 import { customElement, property, state } from 'lit/decorators.js';
 import { CheckScheduler } from './check-scheduler';
 import { checkSpelling, isSupportedLanguage } from './spell-check-client';
-import { applyReplacement, isAccepted, type SpellingIssue } from './spell-engine';
+import { SpellingUnderlines } from './spell-check-underlines';
+import { applyReplacement, isAccepted, remapIssues, type SpellingIssue } from './spell-text';
 
 type Status = 'empty' | 'checking' | 'ok' | 'issues' | 'error';
 
@@ -63,7 +67,9 @@ export class SpellCheckIndicator extends LitElement {
   @state() private stale = false;
 
   /** The exact text the current `issues` refer to. */
-  private checkedText = '';
+  @state() private checkedText = '';
+  /** The word whose suggestion popover is open next to it, if any. */
+  @state() private wordIssue?: SpellingIssue;
   /** Words ignored by the user in this field (until the page is reloaded). */
   private readonly ignored = new Set<string>();
   private field?: FieldElement;
@@ -72,6 +78,10 @@ export class SpellCheckIndicator extends LitElement {
   private suggestions?: Popover;
   private stateObserver?: MutationObserver;
   private focusPanelAfterUpdate = false;
+  private underlines?: SpellingUnderlines;
+  private wordPopover?: Popover;
+  /** Invisible element at the clicked word, used to position `wordPopover`. */
+  private wordAnchor?: HTMLElement;
 
   private readonly scheduler = new CheckScheduler<SpellingIssue[]>(
     (text) => checkSpelling(this.language, text, this.acceptedWords()),
@@ -84,6 +94,13 @@ export class SpellCheckIndicator extends LitElement {
       return;
     }
     const text = this.field!.value ?? '';
+    // Keep underlines on words the edit did not touch until the next check.
+    this.issues = remapIssues(this.checkedText, text, this.issues);
+    this.checkedText = text;
+    if (this.status === 'issues' && !this.issues.length) {
+      this.status = 'checking'; // not "0 errors" before the text was checked
+    }
+    this.closeWordPopover();
     if (text.trim()) {
       this.stale = true;
       this.scheduler.schedule(text);
@@ -161,6 +178,11 @@ export class SpellCheckIndicator extends LitElement {
       opacity: 0.6;
     }
 
+    .error-color {
+      display: none;
+      color: var(--lumo-error-color, #e5222d);
+    }
+
     .sr-only {
       position: absolute;
       width: 1px;
@@ -186,6 +208,8 @@ export class SpellCheckIndicator extends LitElement {
     if (this.nativeInput) {
       this.nativeSpellcheck = this.nativeInput.spellcheck;
       this.nativeInput.spellcheck = false;
+      this.nativeInput.addEventListener('click', this.onInputClick);
+      this.underlines = new SpellingUnderlines(this.nativeInput, () => this.errorColor());
     }
 
     // React to setReadOnly()/setEnabled() from the server.
@@ -206,8 +230,16 @@ export class SpellCheckIndicator extends LitElement {
     if (this.nativeInput && this.nativeSpellcheck !== undefined) {
       this.nativeInput.spellcheck = this.nativeSpellcheck;
     }
+    this.nativeInput?.removeEventListener('click', this.onInputClick);
+    this.underlines?.destroy();
+    this.underlines = undefined;
     this.suggestions?.remove();
     this.suggestions = undefined;
+    this.wordPopover?.remove();
+    this.wordPopover = undefined;
+    this.wordAnchor?.remove();
+    this.wordAnchor = undefined;
+    this.wordIssue = undefined;
     this.field = undefined;
     this.nativeInput = undefined;
     this.issues = [];
@@ -219,7 +251,13 @@ export class SpellCheckIndicator extends LitElement {
     if ((changed.has('language') && changed.get('language') !== undefined) || (changed.has('customWords') && changed.get('customWords') !== undefined)) {
       this.refresh();
     }
+    if (this.active && this.status === 'issues') {
+      this.underlines?.show(this.checkedText, this.issues);
+    } else {
+      this.underlines?.clear();
+    }
     this.suggestions?.requestContentUpdate();
+    this.wordPopover?.requestContentUpdate();
   }
 
   private createPopover() {
@@ -251,6 +289,7 @@ export class SpellCheckIndicator extends LitElement {
       if (this.suggestions) {
         this.suggestions.opened = false;
       }
+      this.closeWordPopover();
       this.status = 'empty';
       return;
     }
@@ -311,7 +350,70 @@ export class SpellCheckIndicator extends LitElement {
     console.error('Spell checking failed:', error);
   }
 
-  private replace(issue: SpellingIssue, replacement: string) {
+  /** Opens the suggestion popover next to a misspelled word the user clicked into. */
+  private readonly onInputClick = () => {
+    const input = this.nativeInput!;
+    const caret = input.selectionStart;
+    const issue =
+      this.active && caret === input.selectionEnd && this.checkedText === input.value
+        ? this.issues.find((i) => i.start <= caret! && caret! <= i.end)
+        : undefined;
+    if (issue) {
+      this.openWordPopover(issue);
+    } else {
+      this.closeWordPopover();
+    }
+  };
+
+  private openWordPopover(issue: SpellingIssue) {
+    const [rect] = this.underlines?.wordRects(issue) ?? [];
+    if (!rect) {
+      return;
+    }
+    if (!this.wordPopover) {
+      this.wordAnchor = document.createElement('div');
+      this.wordAnchor.style.cssText = 'position: fixed; height: 0; pointer-events: none; visibility: hidden;';
+      const popover = document.createElement('vaadin-popover');
+      popover.target = this.wordAnchor;
+      popover.trigger = []; // opened programmatically
+      popover.position = 'bottom-start';
+      // Focus stays in the field, so the user can simply continue typing.
+      popover.autofocus = false;
+      popover.renderer = (root) => render(this.renderPanel(true), root);
+      popover.addEventListener('closed', () => (this.wordIssue = undefined));
+      document.body.append(this.wordAnchor, popover);
+      this.wordPopover = popover;
+    }
+    Object.assign(this.wordAnchor!.style, { left: `${rect.left}px`, top: `${rect.bottom}px`, width: `${rect.width}px` });
+    this.wordIssue = issue;
+    this.wordPopover.accessibleName = `Spelling suggestions for ${issue.word}`;
+    this.wordPopover.opened = true;
+  }
+
+  private closeWordPopover() {
+    if (this.wordPopover?.opened) {
+      this.wordPopover.opened = false;
+    }
+    this.wordIssue = undefined;
+  }
+
+  /** The theme's error color, resolved by the browser (works with dark mode). */
+  private errorColor(): string {
+    const probe = this.renderRoot.querySelector('.error-color');
+    return (probe && getComputedStyle(probe).color) || '#e5222d';
+  }
+
+  /** Called from a popover after the user picked a suggestion or ignored a word. */
+  private afterWordAction(fromWordPopover: boolean) {
+    if (fromWordPopover) {
+      this.closeWordPopover();
+      this.nativeInput?.focus();
+    } else {
+      this.focusPanelAfterUpdate = true;
+    }
+  }
+
+  private replace(issue: SpellingIssue, replacement: string, fromWordPopover = false) {
     const input = this.nativeInput;
     const current = this.field?.value ?? '';
     // Only replace if the word is still exactly where it was found.
@@ -331,15 +433,19 @@ export class SpellCheckIndicator extends LitElement {
     // and syncs to the server regardless of ValueChangeMode.
     input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
-    this.focusPanelAfterUpdate = true;
+    this.afterWordAction(fromWordPopover);
     this.check(this.field!.value);
   }
 
-  private ignore(issue: SpellingIssue) {
+  private ignore(issue: SpellingIssue, fromWordPopover = false) {
     this.ignored.add(issue.word);
     this.issues = this.issues.filter((other) => !isAccepted(other.word, this.ignored));
     this.status = this.issues.length ? 'issues' : 'ok';
-    this.focusPanel();
+    if (fromWordPopover) {
+      this.afterWordAction(true);
+    } else {
+      this.focusPanel();
+    }
   }
 
   private restoreFocus() {
@@ -385,18 +491,22 @@ export class SpellCheckIndicator extends LitElement {
         ${this.status === 'error' ? html`<span aria-hidden="true">!</span>` : nothing}
       </button>
       <span class="sr-only" role="status">${this.status === 'checking' ? '' : label}</span>
+      <span class="error-color" aria-hidden="true"></span>
     `;
   }
 
-  private renderPanel() {
+  /** @param forWord renders the compact panel for `wordIssue` only */
+  private renderPanel(forWord = false) {
+    const issues = forWord ? (this.wordIssue ? [this.wordIssue] : []) : this.issues;
     return html`<spell-check-panel
-      .issues=${this.issues}
+      .compact=${forWord}
+      .issues=${issues}
       .text=${this.checkedText}
       .status=${this.status}
       .languageName=${LANGUAGE_NAMES[this.language] ?? this.language}
       .errorMessage=${this.errorMessage}
-      .onReplace=${(issue: SpellingIssue, word: string) => this.replace(issue, word)}
-      .onIgnore=${(issue: SpellingIssue) => this.ignore(issue)}
+      .onReplace=${(issue: SpellingIssue, word: string) => this.replace(issue, word, forWord)}
+      .onIgnore=${(issue: SpellingIssue) => this.ignore(issue, forWord)}
     ></spell-check-panel>`;
   }
 }
@@ -404,6 +514,8 @@ export class SpellCheckIndicator extends LitElement {
 /** Popover content: the list of misspellings with their suggestions. */
 @customElement('spell-check-panel')
 export class SpellCheckPanel extends LitElement {
+  /** Compact variant next to a word: no header and no context line. */
+  @property({ attribute: false }) compact = false;
   @property({ attribute: false }) issues: SpellingIssue[] = [];
   @property({ attribute: false }) text = '';
   @property({ attribute: false }) status: Status = 'empty';
@@ -416,6 +528,11 @@ export class SpellCheckPanel extends LitElement {
     :host {
       display: block;
       width: min(22rem, 80vw);
+    }
+
+    :host([compact]) {
+      width: auto;
+      max-width: min(22rem, 80vw);
       max-height: min(24rem, 60vh);
       overflow: auto;
       font-size: var(--lumo-font-size-s, 0.875rem);
@@ -489,7 +606,14 @@ export class SpellCheckPanel extends LitElement {
     (button ?? this).focus();
   }
 
+  override updated() {
+    this.toggleAttribute('compact', this.compact);
+  }
+
   override render() {
+    if (this.compact) {
+      return html`<div class="actions">${this.renderActions(this.issues[0])}</div>`;
+    }
     return html`
       <header>
         <strong>Spelling</strong>
@@ -524,7 +648,15 @@ export class SpellCheckPanel extends LitElement {
       <div class="context">
         ${issue.start > CONTEXT_LENGTH ? '…' : ''}${trim(before)}<span class="word">${issue.word}</span>${trim(after)}${issue.end + CONTEXT_LENGTH < this.text.length ? '…' : ''}
       </div>
-      <div class="actions">
+      <div class="actions">${this.renderActions(issue)}</div>
+    </li>`;
+  }
+
+  private renderActions(issue: SpellingIssue | undefined) {
+    if (!issue) {
+      return nothing;
+    }
+    return html`
         ${issue.suggestions.length
           ? issue.suggestions.map(
               (suggestion) => html`<vaadin-button
@@ -542,8 +674,7 @@ export class SpellCheckPanel extends LitElement {
           @click=${() => this.onIgnore(issue)}
           >Ignore</vaadin-button
         >
-      </div>
-    </li>`;
+    `;
   }
 }
 

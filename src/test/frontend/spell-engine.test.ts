@@ -8,13 +8,8 @@
 import { readFileSync } from 'node:fs';
 import { before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  applyReplacement,
-  checkText,
-  createSpellChecker,
-  tokenize,
-  type SpellChecker,
-} from '../../main/frontend/spellcheck/spell-engine.ts';
+import { checkText, createSpellChecker, tokenize, type SpellChecker } from '../../main/frontend/spellcheck/spell-engine.ts';
+import { applyReplacement } from '../../main/frontend/spellcheck/spell-text.ts';
 
 const dictionaryDir = new URL('../../main/frontend/spellcheck/dictionaries/', import.meta.url);
 
